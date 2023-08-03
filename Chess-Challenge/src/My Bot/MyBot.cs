@@ -28,6 +28,23 @@ public class MyBot : IChessBot
             else if (best.Eval > updated.Eval) BestChildIndex = (int)i;
         }
 
+        private int GetPiecesValue(bool isWhite)
+        {
+            int pieces_value = 0, index = 0;
+            foreach (PieceType piece_type in Enum.GetValues(typeof(PieceType)))
+            {
+                ulong pieces_bitboard = ChessBoard.GetPieceBitboard(piece_type, isWhite);
+                while(pieces_bitboard > 0)
+                {
+                    index = BitboardHelper.ClearAndGetIndexOfLSB(ref pieces_bitboard);
+                    pieces_value += index > 0 ? (int)piece_type : 0;
+                    Square square = new(index);
+                }
+            }
+
+            return pieces_value;
+        }
+
         private void Evaluate(Span<Move> moves)
         {
             if (ChessBoard.IsInCheckmate())
@@ -39,11 +56,9 @@ public class MyBot : IChessBot
             } else
             {
                 /* Get evaluation for opponent as we already made move */
-                foreach (PieceType piece_type in Enum.GetValues(typeof(PieceType)))
-                {
-                    ulong opponent_pieces_bitboard = ChessBoard.GetPieceBitboard(piece_type, Color < 0);
-                    
-                }
+                int opp_pieces_value = GetPiecesValue(Color < 0);
+                int my_pieces_value = GetPiecesValue(Color > 0);
+                Eval = opp_pieces_value - my_pieces_value;
             }
         }
 
