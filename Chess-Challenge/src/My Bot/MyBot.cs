@@ -4,98 +4,135 @@ using System;
 
 public class MyBot : IChessBot
 {
+    class MoveTreeComparer : IComparer<MoveTree>
+    {
+        public int Compare(MoveTree? x, MoveTree? y)
+        {
+            if (x == null)
+            {
+                if (y == null) return 0;
+                else return -1;
+            } else if (y == null) return 1;
+            else
+            {
+                MoveTree a = (MoveTree)x, b = (MoveTree)y;
+                if (a.Eval == b.Eval) return 0;
+                else {
+                    if (a.Color > 0) return a.Eval > b.Eval ? 1 : -1;
+                    else return a.Eval < b.Eval ? 1 : -1;
+                }
+            }
+        }
+    }
+
     class MoveTree
     {
         private Board ChessBoard { get; set; }
-        private Dictionary<uint, MoveTree> Children { get; set; }
+        private PriorityQueue<MoveTree, MoveTree> Children { get; set; }
         private MoveTree? Parent { get; set; }
         private Move? Move { get; set; }
 
-        private int BestChildIndex { get; set; }
-        private double Color { get; set; }
-        private double Eval { get; set; }
+        private MoveTree? BestChild { get; set; }
+        public int Color { get; set; }
+        public double Eval { get; set; }
 
-        private void UpdateBestChild(uint i)
+        private void UpdateBestChild()
         {
-            if (BestChildIndex == -1) { BestChildIndex = (int)i; return; }
-
-            MoveTree best = Children[(uint)BestChildIndex];
-            MoveTree updated = Children[i];
-            if (best.Color > 0)
+            PriorityQueue<MoveTree, MoveTree> refresh = new(new MoveTreeComparer());
+            while(Children.Count > 0)
             {
-                if (best.Eval < updated.Eval) BestChildIndex = (int)i;
+                MoveTree child = Children.Dequeue();
+                refresh.Enqueue(child, child);
             }
-            else if (best.Eval > updated.Eval) BestChildIndex = (int)i;
+
+            if (refresh.Count > 0)
+            {
+                BestChild = refresh.Peek();
+            }
         }
 
-        private int GetPiecesValue(bool isWhite)
+        private double GetPiecesValue(bool isWhite)
         {
-            int pieces_value = 0, index = 0;
+            int index = 0;
+            double pieces_value = 0.0;
             foreach (PieceType piece_type in Enum.GetValues(typeof(PieceType)))
             {
                 ulong pieces_bitboard = ChessBoard.GetPieceBitboard(piece_type, isWhite);
                 while(pieces_bitboard > 0)
                 {
                     index = BitboardHelper.ClearAndGetIndexOfLSB(ref pieces_bitboard);
-                    pieces_value += index > 0 ? (int)piece_type : 0;
-                    Square square = new(index);
+                    if (index > 0)
+                    {
+                        Square square = new(index);
+                        ulong piece_scope_bitmap = BitboardHelper.GetPieceAttacks(piece_type, square, ChessBoard, isWhite);
+                        int piece_scope = BitboardHelper.GetNumberOfSetBits(piece_scope_bitmap);
+                        pieces_value += (int)piece_type + 0.1 * pieces_value;
+                    }
                 }
             }
 
-            return pieces_value;
+            return isWhite? pieces_value : -pieces_value;
         }
 
-        private void Evaluate(Span<Move> moves)
+        private void Evaluate(bool after, Span<Move> moves)
         {
+            int color_to_eval = after? -Color : Color;
             if (ChessBoard.IsInCheckmate())
             {
-                Eval = Color > 0 ? double.NegativeInfinity : double.PositiveInfinity;
+                Eval = color_to_eval > 0 ? double.NegativeInfinity : double.PositiveInfinity;
             } else if (ChessBoard.IsDraw())
             {
                 Eval = 0.0;
+            } else if (BestChild != null)
+            {
+                Eval = BestChild.Eval;
             } else
             {
                 /* Get evaluation for opponent as we already made move */
-                int opp_pieces_value = GetPiecesValue(Color < 0);
-                int my_pieces_value = GetPiecesValue(Color > 0);
-                Eval = opp_pieces_value - my_pieces_value;
+                double opp_pieces_value = GetPiecesValue(color_to_eval > 0);
+                double my_pieces_value = GetPiecesValue(Color > 0);
+                Eval = my_pieces_value + opp_pieces_value;
+                // Console.WriteLine($"color = {Color}, eval = {Eval}, opp_pieces_value = {opp_pieces_value}, my_pieces_val = {my_pieces_value}");
             }
         }
 
         public Move? BestMove()
         {
-            if (Children.Count == 0) return null;
-            if (BestChildIndex == -1) return null;
-            return Children[(uint)BestChildIndex].Move;
+            if (BestChild == null) return null;
+            Console.WriteLine($"BestMove eval is {BestChild.Eval}");
+            return BestChild.Move;
         }
 
         public MoveTree(Board board, MoveTree? parent, Move? move, uint depth = 4)
         {
             Span<Move> moves = stackalloc Move[1024];
             ChessBoard = board;
-            Children = new();
+            Children = new(new MoveTreeComparer());
             Parent = parent;
             Move = move;
             Eval = 0.0;
-            BestChildIndex = -1;
+            BestChild = null;
             Color = (parent != null)? -parent.Color : board.IsWhiteToMove? 1 : -1;
+            bool hasMove = false;
 
-            if (move != null) ChessBoard.MakeMove((Move)move);
+            if (move != null) {
+                hasMove = true;
+                ChessBoard.MakeMove((Move)move);
+            }
 
             if (depth > 0)
             {
-                uint i = 0;
                 ChessBoard.GetLegalMovesNonAlloc(ref moves);
                 foreach (var next_move in moves)
                 {
                     MoveTree child = new(board, this, next_move, depth - 1);
-                    Children.Add(i, child);
-                    UpdateBestChild(i);
-                    i++;
+                    Children.Enqueue(child, child);
                 }
-            }
 
-            Evaluate(moves);
+                UpdateBestChild();
+            } else {           
+                Evaluate(hasMove, moves);
+            }
 
             if (move != null) ChessBoard.UndoMove((Move)move);
         }
