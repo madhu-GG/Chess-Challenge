@@ -7,7 +7,7 @@ using System.IO;
 
 public class MyBot : IChessBot
 {
-    class NodeComparer : IComparer<Node>
+    class EvalComparer : IComparer<Node>
     {
         public int Compare(Node x, Node y)
         {
@@ -17,7 +17,7 @@ public class MyBot : IChessBot
         }
     }
 
-    class BadNodeComparer : IComparer<Node>
+    class ReverseEvalComparer : IComparer<Node>
     {
         public int Compare(Node x, Node y)
         {
@@ -137,7 +137,7 @@ public class MyBot : IChessBot
     PriorityQueue<Node, Node> Successors(Node node, int max_children)
     {
         Board board = node.ChessBoard;
-        PriorityQueue<Node, Node> bad_queue = new(new BadNodeComparer());
+        PriorityQueue<Node, Node> bad_queue = new(new ReverseEvalComparer());
         Span<Move> moves = stackalloc Move[1024];
         board.GetLegalMovesNonAlloc(ref moves);
         foreach (var move in moves)
@@ -153,7 +153,7 @@ public class MyBot : IChessBot
             }
         }
 
-        PriorityQueue<Node, Node> good_queue = new(new NodeComparer());
+        PriorityQueue<Node, Node> good_queue = new(new EvalComparer());
         while (bad_queue.Count > 0)
         {
             Node child = bad_queue.Dequeue();
@@ -170,7 +170,7 @@ public class MyBot : IChessBot
                 int depth = 4)
     {
         var successors = Successors(node, max_children);
-        NodeComparer comparer = new();
+        EvalComparer comparer = new();
         Node best_child = successors.Peek();
         while (successors.Count > 0)
         {
