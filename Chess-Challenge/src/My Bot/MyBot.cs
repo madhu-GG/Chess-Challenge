@@ -9,8 +9,12 @@ public class MyBot : IChessBot
 {
     class EvalComparer : IComparer<Node>
     {
-        public int Compare(Node x, Node y)
+        public int Compare(Node? x, Node? y)
         {
+            if (x == null && y == null) return 0;
+            if (x == null) return -1;
+            if (y == null) return 1;
+
             if (x.Eval == y.Eval) return 0;
             int ordering = x.Eval > y.Eval ? 1 : -1;
             return x.Color > 0 ? ordering : -ordering;
@@ -19,31 +23,50 @@ public class MyBot : IChessBot
 
     class ReverseEvalComparer : IComparer<Node>
     {
-        public int Compare(Node x, Node y)
+        public int Compare(Node? x, Node? y)
         {
+            if (x == null && y == null) return 0;
+            if (x == null) return -1;
+            if (y == null) return 1;
+
             if (x.Eval == y.Eval) return 0;
             int ordering = x.Eval < y.Eval ? 1 : -1;
             return x.Color > 0 ? ordering : -ordering;
         }
     }
 
+    class FitnessComparer : IComparer<Node>
+    {
+        public int Compare(Node? x, Node? y)
+        {
+            if (x == null && y == null) return 0;
+            if (x == null) return -1;
+            if (y == null) return 1;
 
-    struct Node
+            if (x.Fitness == y.Fitness) return 0;
+            int ordering = x.Fitness > y.Fitness ? 1 : -1;
+            return x.Color > 0 ? ordering : -ordering;
+        }
+    }
+
+    class Node
     {
         public Board ChessBoard;
         public int Color;
         public Move? Move;
         public double Eval;
+        public double Fitness;
 
-        public Move? BestMove;
+        public Node? BestChild { get; set; }
 
         public Node(Board board)
         {
             this.ChessBoard = board;
             this.Color = board.IsWhiteToMove ? 1 : -1;
             this.Move = null;
-            this.BestMove = null;
+            this.BestChild = null;
             this.Eval = 0.0;
+            this.Fitness = 0.0;
         }
 
         public Node(Node parent, Move move)
@@ -52,7 +75,8 @@ public class MyBot : IChessBot
             this.Move = move;
             this.Color = -parent.Color;
             this.Eval = 0.0;
-            this.BestMove = null;
+            this.BestChild = null;
+            this.Fitness = 0.0;
         }
     }
 
@@ -119,123 +143,72 @@ public class MyBot : IChessBot
                     defenders[defend_index]++;
                 }
 
-                // System.Console.WriteLine($"Piece {piece} on {square} attacks {targets_count} squares.");
-                // System.Console.WriteLine($"Piece {piece} on {square} is defended by {defenders[index]} pieces.");
                 if (piece.IsWhite) white_safety += defenders[index];
                 else black_safety += defenders[index];
             }
 
-            eval = material
-                + 0.01 * ((white_mobility - black_mobility)
-                    + (white_attacks - black_attacks)
-                    + (white_safety - black_safety)) / 64;
+            eval = 0.7 * material
+                 + 0.1 * (white_attacks - black_attacks)
+                 + 0.3 * (white_safety - black_safety)
+                 + 0.05 * (white_mobility - black_mobility);
         }
 
         return eval;
     }
 
-    PriorityQueue<Node, Node> Successors(Node node, int max_children)
+    Node Search(Node node, int depth, int explore_depth = 0)
     {
-        Board board = node.ChessBoard;
-        PriorityQueue<Node, Node> bad_queue = new(new ReverseEvalComparer());
-        Span<Move> moves = stackalloc Move[1024];
-        board.GetLegalMovesNonAlloc(ref moves);
-        foreach (var move in moves)
+        if (depth == 0)
         {
-            Node child = new(node, move);
-            board.MakeMove(move);
-            child.Eval = evaluate(board);
-            board.UndoMove(move);
-            bad_queue.Enqueue(child, child);
-            if (bad_queue.Count > max_children)
+            node.Fitness = node.Eval;
+        }
+        else
+        {
+            var board = node.ChessBoard;
+            PriorityQueue<Node, Node> successors = new(new FitnessComparer());
+            Span<Move> moves = stackalloc Move[1024];
+            board.GetLegalMovesNonAlloc(ref moves);
+            foreach (var move in moves)
             {
-                bad_queue.Dequeue();
+                Node child = new(node, move);
+                board.MakeMove(move);
+                child.Eval = evaluate(board);
+                child = Search(child, depth - 1, explore_depth + 1);
+                board.UndoMove(move);
+                successors.Enqueue(child, child);
+            }
+
+            if (successors.Count > 0)
+            {
+                var best_child = successors.Peek();
+                node.Fitness = best_child.Fitness;
+                node.BestChild = best_child;
+            } else
+            {
+                node.Fitness = node.Eval;
             }
         }
 
-        PriorityQueue<Node, Node> good_queue = new(new EvalComparer());
-        while (bad_queue.Count > 0)
-        {
-            Node child = bad_queue.Dequeue();
-            good_queue.Enqueue(child, child);
-        }
-
-        return good_queue;
-    }
-
-    Node Search(Node node,
-                ref double alpha,
-                ref double beta,
-                int max_children = 20,
-                int depth = 4)
-    {
-        var successors = Successors(node, max_children);
-        EvalComparer comparer = new();
-        Node best_child = successors.Peek();
-        while (successors.Count > 0)
-        {
-            Node child = successors.Dequeue();
-            if (depth > 0) child = Search(child, ref alpha, ref beta, max_children, depth - 1);
-            int cmp = comparer.Compare(child, best_child);
-            if (cmp > 0)
-            {
-                best_child = child;
-            }
-
-            if (node.Color > 0 && best_child.Eval >= beta)
-            {
-                if (node.Eval < best_child.Eval)
-                {
-                    node.Eval = best_child.Eval;
-                    node.BestMove = best_child.Move;
-                }
-                return best_child;
-            }
-            else if (node.Color < 0 && best_child.Eval <= alpha)
-            {
-                if (node.Eval > best_child.Eval)
-                {
-                    node.Eval = best_child.Eval;
-                    node.BestMove = best_child.Move;
-                }
-                return best_child;
-            }
-
-            if (node.Color > 0)
-            {
-                alpha = Math.Max(alpha, child.Eval);
-            }
-            else
-            {
-                beta = Math.Min(beta, child.Eval);
-            }
-        }
-
-        if (node.Color > 0 && node.Eval < best_child.Eval)
-        {
-            node.Eval = best_child.Eval;
-            node.BestMove = best_child.Move;
-        }
-        else if (node.Color < 0 && node.Eval > best_child.Eval)
-        {
-            node.Eval = best_child.Eval;
-            node.BestMove = best_child.Move;
-        }
-
-        return best_child;
+        return node;
     }
 
     public Move Think(Board board, Timer timer)
     {
         Node root = new(board);
         int depth = 4;
-        if (timer.MillisecondsRemaining / 1000 < 10) depth = 2;
-        else if (timer.MillisecondsRemaining / 1000 < 30) depth = 3;
+        root = Search(root, depth, 0);
+        if (root.BestChild == null || root.BestChild.Move == null)
+        {
+            System.Console.WriteLine("No best move found, selecting first legal move.");
+            Span<Move> moves = stackalloc Move[1024];
+            board.GetLegalMovesNonAlloc(ref moves);
+            return moves[0];
+        }
+        else
+        {
+            System.Console.WriteLine($"Found {root.BestChild.Move}, Eval: {root.BestChild.Eval}");
+        }
 
-        double alpha = double.NegativeInfinity;
-        double beta = double.PositiveInfinity;
-        Node best_child = Search(root, ref alpha, ref beta, 20, depth);
-        System.Console.WriteLine($"Eval: {best_child.Eval}, {best_child.Move}");
-        return best_child.Move ?? Move.NullMove;
+        return (Move)root.BestChild.Move;
     }
 }
